@@ -85,9 +85,10 @@ def restore(api=None, download=None) -> int:
     """At container start: lay the last saved state over the image's files."""
     if not enabled():
         return 0
-    from huggingface_hub import HfApi, snapshot_download
-    api = api or HfApi(token=token())
-    download = download or snapshot_download
+    if api is None or download is None:
+        from huggingface_hub import HfApi, snapshot_download
+        api = api or HfApi(token=token())
+        download = download or snapshot_download
     image = {rel: _hash(WEB / rel) for rel in state_files()}
     BOOT.write_text(json.dumps(image), encoding="utf-8")
     api.create_repo(repo(), repo_type="dataset", private=True, exist_ok=True)
@@ -118,8 +119,9 @@ def save(reason: str = "update", api=None) -> bool:
         return False
     with _lock:
         try:
-            from huggingface_hub import HfApi
-            api = api or HfApi(token=token())
+            if api is None:
+                from huggingface_hub import HfApi
+                api = HfApi(token=token())
             with tempfile.TemporaryDirectory() as d:
                 for rel in state_files():
                     _copy(WEB / rel, Path(d) / rel)
