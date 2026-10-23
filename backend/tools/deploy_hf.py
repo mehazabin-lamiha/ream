@@ -55,21 +55,61 @@ def space_readme() -> str:
     return HEADER + (WEB / "README.md").read_text(encoding="utf-8")
 
 
+def wait_for_space(api, space: str, minutes: int = 40) -> str:
+    """Follow the build until the Space runs or fails; on failure print the end of the build log."""
+    import time
+    last, t0 = "", time.time()
+    while time.time() - t0 < minutes * 60:
+        try:
+            stage = str(api.get_space_runtime(space).stage)
+        except Exception as e:
+            stage = f"unknown ({type(e).__name__})"
+        if stage != last:
+            print(f"  {time.strftime('%H:%M:%S')}  {stage}", flush=True)
+            last = stage
+        if stage in ("RUNNING", "BUILD_ERROR", "RUNTIME_ERROR", "CONFIG_ERROR", "NO_APP_FILE"):
+            if stage != "RUNNING":
+                for kind in ("build", "run"):
+                    try:
+                        import requests
+                        r = requests.get(f"https://huggingface.co/api/spaces/{space}/logs/{kind}", stream=True, timeout=15,
+                                         headers={"Authorization": f"Bearer {api.token}"})
+                        lines = []
+                        for raw in r.iter_lines(decode_unicode=True):
+                            if raw and raw.startswith("data:"):
+                                lines.append(raw[5:].strip())
+                            if len(lines) > 400:
+                                break
+                        print(f"--- last {kind} log lines ---\n" + "\n".join(lines[-25:]))
+                    except Exception:
+                        pass
+            return stage
+        time.sleep(20)
+    return last
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    ap.add_argument("space", help="<hf-username>/<space-name>, e.g. mehazabin/ream")
+    ap.add_argument("space", nargs="?", help="<hf-username>/<space-name>; default <your-hf-username>/ream")
     ap.add_argument("--private", action="store_true", help="create the Space as private (only you can open it)")
-    ap.add_argument("--secrets", action="store_true", help="copy API keys and RAEM_RUN_TOKEN from this shell into the Space")
+    ap.add_argument("--secrets", action="store_true", help="copy API keys, HF_TOKEN and RAEM_RUN_TOKEN (shell or web/.env) into the Space")
+    ap.add_argument("--wait", action="store_true", help="follow the build until the Space runs or fails")
     a = ap.parse_args()
-    if a.space.count("/") != 1:
-        sys.exit("Give the Space as <hf-username>/<space-name>.")
+    try:  # keys and tokens may sit in web/.env (git ignores it, so it is never uploaded)
+        from dotenv import load_dotenv
+        load_dotenv(WEB / ".env", override=False)
+    except ImportError:
+        pass
     from huggingface_hub import HfApi
-    api = HfApi(token=os.environ.get("HF_TOKEN") or None)  # else the login saved by `huggingface-cli login`
+    api = HfApi(token=os.environ.get("HF_TOKEN") or None)  # else the login saved by `hf auth login`
     try:
         who = api.whoami()["name"]
     except Exception:
-        sys.exit("Not logged in to Hugging Face: set $env:HF_TOKEN to a token with write access (huggingface.co/settings/tokens).")
+        sys.exit("Not logged in to Hugging Face: put HF_TOKEN=hf_... (a Write token from huggingface.co/settings/tokens) in web/.env.")
     print(f"Hugging Face account: {who}")
+    a.space = a.space or f"{who}/ream"
+    if a.space.count("/") != 1:
+        sys.exit("Give the Space as <hf-username>/<space-name>.")
     api.create_repo(a.space, repo_type="space", space_sdk="docker", private=a.private, exist_ok=True)
     data = f"{a.space}-data"  # private dataset that keeps ChromaDB memory, the run database and logs across restarts
     api.create_repo(data, repo_type="dataset", private=True, exist_ok=True)
@@ -97,6 +137,11 @@ def main() -> int:
     if not a.secrets:
         print("Add RAEM_RUN_TOKEN, HF_TOKEN (write token, for saving data) and ANTHROPIC_API_KEY (or MOONSHOT_API_KEY)"
               " under Settings -> Variables and secrets -> New secret.")
+    if a.wait:
+        print("\nFollowing the build (the first one installs PyTorch: 10 to 20 minutes):", flush=True)
+        stage = wait_for_space(api, a.space)
+        print(f"Space stage: {stage}")
+        return 0 if stage == "RUNNING" else 1
     return 0
 
 
