@@ -577,3 +577,53 @@ def test_hugging_face_upload_list_and_header():
     assert not any(p == ".env" or p.startswith(("backend/storage/", ".github/")) or p == ".gitattributes" for p in files)
     head = deploy_hf.space_readme().split("---")[1]
     assert "sdk: docker" in head and "app_port: 8000" in head
+
+
+def test_hf_dataset_keeps_state_across_restarts(tmp_path, monkeypatch):
+    """Free Space storage: save() uploads the changing data; restore() brings it back, an image change wins, code is not synced."""
+    import sqlite3
+    sys.path.insert(0, str(BACKEND / "tools"))
+    import hf_sync
+    web = tmp_path / "web"
+    for rel, text in {"backend/engine/notebooks/raem_chroma_db/x.bin": "memory v1", "backend/engine/notebooks/AAPL.ipynb": "code",
+                      "backend/engine/data/IBM.csv": "p1", "backend/data/extra.json": "{}"}.items():
+        (web / rel).parent.mkdir(parents=True, exist_ok=True)
+        (web / rel).write_text(text, encoding="utf-8")
+    (web / "backend" / "storage").mkdir(parents=True)
+    c = sqlite3.connect(web / "backend" / "storage" / "raem.db"); c.execute("create table runs(id)"); c.execute("insert into runs values ('r1')"); c.commit(); c.close()
+    monkeypatch.setattr(hf_sync, "WEB", web)
+    monkeypatch.setattr(hf_sync, "BOOT", tmp_path / "boot.json")
+    monkeypatch.setenv("RAEM_HF_DATASET", "me/ream-data")
+    monkeypatch.setenv("HF_TOKEN", "hf_test")
+    remote = tmp_path / "remote"
+
+    class FakeApi:
+        def create_repo(self, *a, **k):
+            pass
+
+        def upload_folder(self, folder_path, **k):
+            shutil.rmtree(remote, ignore_errors=True)
+            shutil.copytree(folder_path, remote)
+
+    def fake_download(**k):
+        if not remote.exists():
+            raise FileNotFoundError("empty dataset")
+        shutil.copytree(remote, k["local_dir"], dirs_exist_ok=True)
+        return k["local_dir"]
+
+    import shutil
+    assert hf_sync.restore(api=FakeApi(), download=fake_download) == 0      # first start: nothing saved yet
+    (web / "backend/engine/notebooks/raem_chroma_db/x.bin").write_text("memory v2 (written by a run)", encoding="utf-8")
+    assert hf_sync.save("analysis AAPL", api=FakeApi())
+    assert not (remote / "backend/engine/notebooks/AAPL.ipynb").exists()   # code is never synced
+    assert (remote / "backend/storage/raem.db").exists()
+    # restart with a new image: the disk is back to the image, and one price file was pushed in git
+    (web / "backend/engine/notebooks/raem_chroma_db/x.bin").write_text("memory v1", encoding="utf-8")
+    (web / "backend/engine/data/IBM.csv").write_text("p2 pushed", encoding="utf-8")
+    (web / "backend/storage/raem.db").unlink()
+    hf_sync.restore(api=FakeApi(), download=fake_download)
+    assert (web / "backend/engine/notebooks/raem_chroma_db/x.bin").read_text() == "memory v2 (written by a run)"
+    assert (web / "backend/engine/data/IBM.csv").read_text() == "p2 pushed"
+    assert sqlite3.connect(web / "backend/storage/raem.db").execute("select id from runs").fetchall() == [("r1",)]
+    monkeypatch.delenv("HF_TOKEN")
+    assert hf_sync.restore(api=FakeApi(), download=fake_download) == 0 and not hf_sync.save("x", api=FakeApi())

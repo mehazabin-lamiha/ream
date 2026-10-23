@@ -37,3 +37,4 @@ langchain-google-genai>=2.0
 stockstats>=0.6.5
 python-dotenv>=1.0
 requests>=2.32
+huggingface_hub>=0.30          # free storage on a Hugging Face Space (backend/tools/hf_sync.py)

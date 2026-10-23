@@ -36,7 +36,8 @@ short_description: 7-day stock forecasts and LLM agent analysis
 
 """
 SECRETS = ["RAEM_RUN_TOKEN", "ANTHROPIC_API_KEY", "MOONSHOT_API_KEY", "KIMI_API_KEY", "OPENAI_API_KEY",
-           "GOOGLE_API_KEY", "GROQ_API_KEY", "RAEM_REFRESH_TOKEN", "RAEM_KIMI_BASE_URL"]
+           "GOOGLE_API_KEY", "GROQ_API_KEY", "RAEM_REFRESH_TOKEN", "RAEM_KIMI_BASE_URL",
+           "HF_TOKEN"]  # HF_TOKEN lets the Space save its data to the private dataset (hf_sync.py)
 VARIABLES = {"PORT": "8000", "TZ": "Asia/Dhaka"}
 SKIP = (".gitattributes", ".github/")  # the Space keeps its own .gitattributes (large-file rules); CI is GitHub's
 
@@ -70,7 +71,9 @@ def main() -> int:
         sys.exit("Not logged in to Hugging Face: set $env:HF_TOKEN to a token with write access (huggingface.co/settings/tokens).")
     print(f"Hugging Face account: {who}")
     api.create_repo(a.space, repo_type="space", space_sdk="docker", private=a.private, exist_ok=True)
-    for k, v in VARIABLES.items():
+    data = f"{a.space}-data"  # private dataset that keeps ChromaDB memory, the run database and logs across restarts
+    api.create_repo(data, repo_type="dataset", private=True, exist_ok=True)
+    for k, v in dict(VARIABLES, RAEM_HF_DATASET=data).items():
         api.add_space_variable(a.space, k, v)
     if a.secrets:
         for name in SECRETS:
@@ -90,8 +93,10 @@ def main() -> int:
     owner, name = a.space.split("/")
     print(f"\nDone. Build log and settings: https://huggingface.co/spaces/{a.space}")
     print(f"The site, once the build finishes (10 to 20 minutes): https://{owner.lower()}-{name.lower().replace('_', '-').replace('.', '-')}.hf.space")
+    print(f"Data (ChromaDB memory, runs, logs) is kept in the private dataset https://huggingface.co/datasets/{data}")
     if not a.secrets:
-        print("Add RAEM_RUN_TOKEN and ANTHROPIC_API_KEY (or MOONSHOT_API_KEY) under Settings -> Variables and secrets -> New secret.")
+        print("Add RAEM_RUN_TOKEN, HF_TOKEN (write token, for saving data) and ANTHROPIC_API_KEY (or MOONSHOT_API_KEY)"
+              " under Settings -> Variables and secrets -> New secret.")
     return 0
 
 

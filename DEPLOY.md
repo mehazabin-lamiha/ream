@@ -20,15 +20,19 @@ A Space runs the same Docker image on Hugging Face's free CPU (2 vCPU, 16 GB of 
    $env:HF_TOKEN = "hf_..."
    python backend/tools/deploy_hf.py <hf-username>/ream
    ```
-   The script creates the Space (Docker), sets `PORT=8000` and `TZ`, and uploads the files git would push.
-3. The Space page → **Settings → Variables and secrets → New secret**: `RAEM_RUN_TOKEN`, and `ANTHROPIC_API_KEY` and/or
-   `MOONSHOT_API_KEY`. (Or set them in the same PowerShell window first and add `--secrets` to the command.)
+   The script creates the Space (Docker) and a private dataset `<hf-username>/ream-data` for its data, sets `PORT=8000`,
+   `TZ` and `RAEM_HF_DATASET`, and uploads the files git would push.
+3. The Space page → **Settings → Variables and secrets → New secret**: `RAEM_RUN_TOKEN`, `HF_TOKEN` (the same write token:
+   it lets the Space save its data), and `ANTHROPIC_API_KEY` and/or `MOONSHOT_API_KEY`. (Or set them in the same PowerShell
+   window first and add `--secrets` to the command.)
 4. Wait for the build (the **Logs** tab, 10 to 20 minutes), then open `https://<hf-username>-ream.hf.space`.
 5. Later changes: run step 2 again; the Space rebuilds.
 
-Free Spaces sleep after 48 hours without visitors (the next visit wakes them) and start the run database again on a
-restart; the saved results in the repository stay. With Hugging Face's persistent storage (Settings → Persistent storage),
-add the variable `RAEM_DATA_DIR=/data` and runs, held runs, prices and memory stay too.
+**Data stays, for free.** A Space's own disk starts over on every restart, so the app keeps its changing data in the
+private dataset: after every finished run it uploads ChromaDB memory, the run database, held runs, prices, trading logs
+and saved results (only the changed parts travel), and on start it downloads them again (`backend/tools/hf_sync.py`).
+A file you change in git and deploy wins over the saved copy. Free Spaces sleep after 48 hours without visitors; the next
+visit wakes them in a minute or two.
 
 ## 0. Before you start
 

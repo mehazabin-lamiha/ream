@@ -298,3 +298,14 @@ def _execute(run: dict) -> None:
     finally:
         _live.pop(rid, None)
         _held.discard(rid)
+        _save_state(f"{run['kind']} {run['ticker']}")
+
+
+def _save_state(reason: str) -> None:
+    """On a Hugging Face Space with RAEM_HF_DATASET set: copy the changed data (memory, database...) to the dataset."""
+    try:
+        sys.path.insert(0, str(config.BACKEND / "tools"))
+        import hf_sync
+        hf_sync.save_in_background(reason)
+    except Exception as e:
+        print("worker: state save skipped:", e, flush=True)
