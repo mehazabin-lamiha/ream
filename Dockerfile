@@ -6,7 +6,11 @@ FROM python:3.12-slim
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 PYTHONIOENCODING=utf-8
 # "Today" for runs and the notebooks' TRADE_DATE: Bangladesh time, as on the research PC (override with TZ in .env)
 ENV TZ=Asia/Dhaka
-RUN apt-get update && apt-get install -y --no-install-recommends tzdata && rm -rf /var/lib/apt/lists/*
+# One home for caches (chromadb's model, matplotlib, Jupyter) whichever user runs the container: root on Railway and
+# docker compose, user 1000 on Hugging Face Spaces
+ENV HOME=/home/user
+RUN apt-get update && apt-get install -y --no-install-recommends tzdata && rm -rf /var/lib/apt/lists/* \
+    && mkdir -p /home/user
 WORKDIR /app
 
 COPY backend/requirements.txt /tmp/requirements.txt
@@ -17,7 +21,9 @@ RUN python -c "from chromadb.utils.embedding_functions.onnx_mini_lm_l6_v2 import
 
 # backend/ (API, engine, exporter, data) and frontend/ (page sources and built page)
 COPY . .
-RUN python backend/refresh.py --build-only
+RUN python backend/refresh.py --build-only \
+    && chmod -R a+rwX /app /home/user
+# the app writes its database, prices, logs and rebuilt page under /app, so any user may write there (Spaces run as 1000)
 
 EXPOSE 8000
 # persist.py moves the changing folders onto the volume when RAEM_DATA_DIR is set (Railway); the page is then rebuilt

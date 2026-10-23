@@ -566,3 +566,14 @@ def test_past_memory_is_copied_when_ollama_is_missing(tmp_path, monkeypatch):
     assert news.count() == 2 and dst.get_collection("raem_episodic_memory", embedding_function=ef).count() == 1
     hit = news.query(query_texts=["IBM cloud revenue"], n_results=1, where={"company": "IBM"})
     assert hit["ids"][0] == ["n1"]
+
+
+def test_hugging_face_upload_list_and_header():
+    """The Space gets what git would push (no .env, no run database), its own .gitattributes, and a docker header."""
+    sys.path.insert(0, str(BACKEND / "tools"))
+    import deploy_hf
+    files = deploy_hf.files_to_upload()
+    assert "Dockerfile" in files and "backend/app/main.py" in files and "frontend/dist/index.html" in files
+    assert not any(p == ".env" or p.startswith(("backend/storage/", ".github/")) or p == ".gitattributes" for p in files)
+    head = deploy_hf.space_readme().split("---")[1]
+    assert "sdk: docker" in head and "app_port: 8000" in head
